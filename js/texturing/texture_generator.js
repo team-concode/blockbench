@@ -1068,16 +1068,21 @@ export const TextureGenerator = {
 				let h = tpl.height;
 
 				if (options.padding) {
-					w++; h++;
+					w+=2; h+=2;
 					for (var x = 0; x < w; x++) {
-						if (tpl.matrix && !tpl.matrix[x] && !tpl.matrix[x-1]) continue;
+						if (tpl.matrix && !tpl.matrix[x] && !tpl.matrix[x-1] && !tpl.matrix[x-2]) continue;
 						for (var y = 0; y < h; y++) {
 							if (
-								tpl.matrix && 
+								tpl.matrix &&
 								(!tpl.matrix[x] || !tpl.matrix[x][y]) &&
 								(!tpl.matrix[x-1] || !tpl.matrix[x-1][y]) &&
+								(!tpl.matrix[x-2] || !tpl.matrix[x-2][y]) &&
 								(!tpl.matrix[x] || !tpl.matrix[x][y-1]) &&
-								(!tpl.matrix[x-1] || !tpl.matrix[x-1][y-1])
+								(!tpl.matrix[x-1] || !tpl.matrix[x-1][y-1]) &&
+								(!tpl.matrix[x-2] || !tpl.matrix[x-2][y-1]) &&
+								(!tpl.matrix[x] || !tpl.matrix[x][y-2]) &&
+								(!tpl.matrix[x-1] || !tpl.matrix[x-1][y-2]) &&
+								(!tpl.matrix[x-2] || !tpl.matrix[x-2][y-2])
 							) continue;
 							if (cb(sx+x, sy+y)) return;
 						}
@@ -1107,6 +1112,14 @@ export const TextureGenerator = {
 					extend_x = Math.max(extend_x, x + tpl.width);
 					extend_y = Math.max(extend_y, y + tpl.height);
 					return true;
+				}
+			}
+
+			// Pre-occupy edge pixels so templates are placed with 1px padding from texture borders
+			if (options.padding) {
+				for (let i = 0; i < 2e3; i++) {
+					occupy(0, i);
+					occupy(i, 0);
 				}
 			}
 
@@ -1575,6 +1588,47 @@ export const TextureGenerator = {
 			}
 			TextureGenerator.paintCubeBoxTemplate(t.obj, options.texture, canvas, t, false, res_multiple);
 		})
+
+		// Dilation: expand edge pixels of each part by 1px into the padding area
+		if (options.padding) {
+			let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+			let src = imgData.data;
+			let w = canvas.width;
+			let h = canvas.height;
+			let out = new Uint8ClampedArray(src);
+			let R = res_multiple;
+
+			function getAlpha(px, py) {
+				if (px < 0 || py < 0 || px >= w || py >= h) return 0;
+				return src[(py * w + px) * 4 + 3];
+			}
+			function copyPixel(sx, sy, dx, dy) {
+				if (dx < 0 || dy < 0 || dx >= w || dy >= h) return;
+				let si = (sy * w + sx) * 4;
+				let di = (dy * w + dx) * 4;
+				out[di]     = src[si];
+				out[di + 1] = src[si + 1];
+				out[di + 2] = src[si + 2];
+				out[di + 3] = src[si + 3];
+			}
+
+			for (let y = 0; y < h; y++) {
+				for (let x = 0; x < w; x++) {
+					if (getAlpha(x, y) > 0) continue; // skip filled pixels
+					// Check 8-directional neighbors for a filled pixel to copy from (cardinal first, then diagonal)
+					let neighbors = [[x-1,y],[x+1,y],[x,y-1],[x,y+1],[x-1,y-1],[x+1,y-1],[x-1,y+1],[x+1,y+1]];
+					for (let [nx, ny] of neighbors) {
+						if (getAlpha(nx, ny) > 0) {
+							copyPixel(nx, ny, x, y);
+							break;
+						}
+					}
+				}
+			}
+
+			imgData.data.set(out);
+			ctx.putImageData(imgData, 0, 0);
+		}
 
 		var dataUrl = canvas.toDataURL()
 		let texture = typeof makeTexture == 'function' ? makeTexture(dataUrl) : makeTexture;
